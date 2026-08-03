@@ -555,14 +555,54 @@ def main():
         doc.InsertMaterial(mat)
         doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, mat)
         made.append(mat_name)
+    # 按对象名把材质赋上去, 多材质对象用同名选集做限制
+    mat_by_name = {{m.GetName(): m for m in doc.GetMaterials()}}
+    obj_map = data.get("objects", {{}})
+
+    def walk(op):
+        while op:
+            yield op
+            if op.GetDown():
+                for x in walk(op.GetDown()):
+                    yield x
+            op = op.GetNext()
+
+    assigned, no_obj = 0, set(obj_map.keys())
+    for op in walk(doc.GetFirstObject()):
+        mats = obj_map.get(op.GetName())
+        if not mats:
+            continue
+        no_obj.discard(op.GetName())
+        existing_tags = set()
+        sel_names = set()
+        for t in op.GetTags():
+            if t.GetType() == c4d.Ttexture and t.GetMaterial():
+                existing_tags.add(t.GetMaterial().GetName())
+            elif t.GetType() == c4d.Tpolygonselection:
+                sel_names.add(t.GetName())
+        for mn in mats:
+            if mn in existing_tags:
+                continue
+            mat = mat_by_name.get(mn)
+            if not mat:
+                continue
+            tag = op.MakeTag(c4d.Ttexture)
+            tag.SetMaterial(mat)
+            tag[c4d.TEXTURETAG_PROJECTION] = c4d.TEXTURETAG_PROJECTION_UVW
+            if len(mats) > 1 and mn in sel_names:
+                tag[c4d.TEXTURETAG_RESTRICTION] = mn
+            doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, tag)
+            assigned += 1
+
     doc.EndUndo()
     c4d.EventAdd()
-    lines = ["建好 %d 个 Octane 材质" % len(made)]
+    lines = ["建好 %d 个 Octane 材质, 赋给对象 %d 处" % (len(made), assigned)]
+    if no_obj:
+        lines.append("场景里没找到的对象(先导入 abc 再跑我): " + ", ".join(sorted(no_obj)[:6]))
     if skipped_metal:
         lines.append("金属度需手动接: " + ", ".join(sorted(set(skipped_metal))))
     if missing:
         lines.append("缺贴图: " + "; ".join(missing[:6]))
-    lines.append("材质按名拖到 abc 对象/选集上即可")
     c4d.gui.MessageDialog("\\n".join(lines))
 
 
@@ -623,11 +663,14 @@ class POND_OT_export_c4d_full(bpy.types.Operator):
         tex_dir = os.path.join(proj_dir, "textures_c4d")
         os.makedirs(tex_dir, exist_ok=True)
 
-        # 1. 收集可见网格的 Principled 通道
-        mapping, manifest, used_imgs = {}, {}, {}
+        # 1. 收集可见网格的 Principled 通道, 顺便记对象用了哪些材质(C4D 侧按名赋回)
+        mapping, manifest, used_imgs, obj_map = {}, {}, {}, {}
         for o in bpy.data.objects:
             if o.type != "MESH" or not o.visible_get():
                 continue
+            slot_names = [s.material.name for s in o.material_slots if s.material]
+            if slot_names:
+                obj_map[o.name] = slot_names
             for slot in o.material_slots:
                 m = slot.material
                 if not m or m.name in manifest or not m.use_nodes:
@@ -682,8 +725,8 @@ class POND_OT_export_c4d_full(bpy.types.Operator):
         # 3. 清单落盘
         manifest_path = os.path.join(proj_dir, stem + "_材质清单.json")
         with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump({"textures_dir": "textures_c4d", "materials": manifest}, f,
-                      ensure_ascii=False, indent=1)
+            json.dump({"textures_dir": "textures_c4d", "materials": manifest,
+                       "objects": obj_map}, f, ensure_ascii=False, indent=1)
 
         # 4. abc 导出, 返回值必须查, 静默取消要大声说
         abc_path = os.path.join(proj_dir, stem + "_c4d.abc")
