@@ -1,6 +1,6 @@
 # core/snapshot.py — IPR 视口快照对比（合并核心）
 #
-# 合并基准：Bekkan/STOOL_part/Snapshot.py（桶桶已 debug 的版本）。
+# 合并基准：Bekkan/STOOL_part/Snapshot.py。
 # 相比 Pond 旧复制版的优势：逐窗口独立快照（area_id）、RGBA8 纹理（显存 1/4）、
 # 画回前 sRGB 预解码校准（5.2 实测 1 LSB 无损）、load_post 自动清理失效纹理。
 # 移植自 Pond 的新增：DeleteSnap（删除选中）、ExportSnap（导出为图像数据块）。
