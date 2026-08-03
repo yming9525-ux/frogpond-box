@@ -1,2 +1,3 @@
 __pycache__/
 *.pyc
+tools/pond_selftest_result.json
