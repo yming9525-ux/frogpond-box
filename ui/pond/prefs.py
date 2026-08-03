@@ -18,6 +18,7 @@ MODULES = (
     ("show_sixproj", "六面投射"),
     ("show_lightdesk", "灯光台"),
     ("show_bakemap", "烘焙贴图"),
+    ("show_hilow", "高模烘低模"),
     ("show_splitter", "一键拆分"),
     ("show_renderlayers", "分层渲染"),
 )
