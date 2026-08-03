@@ -504,11 +504,216 @@ class POND_OT_export_mat_manifest(bpy.types.Operator, ExportHelper):
         return {"FINISHED"}
 
 
+# 一条龙生成的 C4D 侧重建脚本模板。Octane ID 来自 I:\Shoal\c4d_scripts\octane_material_ids.md 实测表
+_C4D_REBUILD_TEMPLATE = '''# -*- coding: utf-8 -*-
+# {stem} · Octane 材质一键重建(池塘一条龙自动生成)
+# 用法: C4D 导入 {stem}_c4d.abc 后, 脚本管理器载入本文件执行
+import c4d
+import json
+import os
+
+MANIFEST = r"{manifest}"
+OC_MATERIAL = 1029501
+OC_IMAGETEX = 1029508
+TEX_PATH_ID = 1100
+LINKS = {{"basecolor": 2517, "roughness": 2533, "normal": 2542,
+         "alpha": 2545, "emission": 2557}}
+# metallic 槽位实测表标"待定", 不自动接, 结尾弹窗提示手动
+
+
+def main():
+    doc = c4d.documents.GetActiveDocument()
+    if not os.path.exists(MANIFEST):
+        c4d.gui.MessageDialog("找不到清单:\\n" + MANIFEST)
+        return
+    with open(MANIFEST, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    tex_dir = os.path.join(os.path.dirname(MANIFEST), data.get("textures_dir", "textures_c4d"))
+    made, skipped_metal, missing = [], [], []
+    doc.StartUndo()
+    existing = {{m.GetName(): m for m in doc.GetMaterials()}}
+    for mat_name, channels in data.get("materials", {{}}).items():
+        if mat_name in existing:
+            continue
+        mat = c4d.BaseMaterial(OC_MATERIAL)
+        mat.SetName(mat_name)
+        for key, spec in channels.items():
+            if "tex" not in spec:
+                continue
+            path = os.path.join(tex_dir, spec["tex"])
+            if not os.path.exists(path):
+                missing.append(mat_name + " : " + spec["tex"])
+                continue
+            if key == "metallic":
+                skipped_metal.append(mat_name)
+                continue
+            if key in LINKS:
+                sh = c4d.BaseShader(OC_IMAGETEX)
+                sh[TEX_PATH_ID] = path
+                mat.InsertShader(sh)
+                mat[LINKS[key]] = sh
+        doc.InsertMaterial(mat)
+        doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, mat)
+        made.append(mat_name)
+    doc.EndUndo()
+    c4d.EventAdd()
+    lines = ["建好 %d 个 Octane 材质" % len(made)]
+    if skipped_metal:
+        lines.append("金属度需手动接: " + ", ".join(sorted(set(skipped_metal))))
+    if missing:
+        lines.append("缺贴图: " + "; ".join(missing[:6]))
+    lines.append("材质按名拖到 abc 对象/选集上即可")
+    c4d.gui.MessageDialog("\\n".join(lines))
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+class POND_OT_export_c4d_full(bpy.types.Operator):
+    """一条龙导出给 C4D：解包贴图(文件名规范化) + 材质清单 + abc 顶点缓存 + 生成 Octane 重建脚本。
+产物全落在工程同目录, 工程本身不动"""
+    bl_idname = "pond.export_c4d_full"
+    bl_label = "一条龙导出(abc+贴图+材质)"
+
+    _IMG_EXTS = (".png", ".jpg", ".jpeg", ".tga", ".tif", ".tiff", ".bmp", ".exr", ".webp")
+    _CHANNELS = {"Base Color": "basecolor", "Roughness": "roughness", "Metallic": "metallic",
+                 "Alpha": "alpha", "Normal": "normal", "Emission Color": "emission"}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(bpy.data.filepath)
+
+    @classmethod
+    def _norm_name(cls, img_name):
+        """Blender 图名转 C4D 认得出的文件名, xx.png.004 改成 xx_004.png"""
+        import re
+        n = re.sub(r'[\\/:*?"<>|]', "_", img_name)
+        n = re.sub(r"\.(\d{3})$", r"_\1", n)
+        stem, ext = os.path.splitext(n)
+        if ext.lower() not in cls._IMG_EXTS:
+            m = re.match(r"(.+?)\.(png|jpe?g|tga|tiff?|bmp|exr|webp)(.*)$", n, re.I)
+            if m:
+                stem = m.group(1) + m.group(3).replace(".", "_")
+                ext = "." + m.group(2)
+            else:
+                stem, ext = n, ".png"
+        return stem + ext
+
+    @classmethod
+    def _trace_image(cls, socket, depth=0):
+        """顺着链接找图像节点, 允许穿过 NormalMap/Mix 这类中间节点"""
+        if not socket.is_linked or depth > 3:
+            return None
+        node = socket.links[0].from_node
+        if node.type == "TEX_IMAGE":
+            return node.image
+        for inp in node.inputs:
+            r = cls._trace_image(inp, depth + 1)
+            if r:
+                return r
+        return None
+
+    def execute(self, context):
+        import json
+        import shutil
+        proj_dir = os.path.dirname(bpy.data.filepath)
+        stem = os.path.splitext(os.path.basename(bpy.data.filepath))[0]
+        tex_dir = os.path.join(proj_dir, "textures_c4d")
+        os.makedirs(tex_dir, exist_ok=True)
+
+        # 1. 收集可见网格的 Principled 通道
+        mapping, manifest, used_imgs = {}, {}, {}
+        for o in bpy.data.objects:
+            if o.type != "MESH" or not o.visible_get():
+                continue
+            for slot in o.material_slots:
+                m = slot.material
+                if not m or m.name in manifest or not m.use_nodes:
+                    continue
+                bsdf = next((n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+                entry = {}
+                if bsdf:
+                    for sock_name, key in self._CHANNELS.items():
+                        sock = bsdf.inputs.get(sock_name)
+                        if not sock:
+                            continue
+                        img = self._trace_image(sock)
+                        if img:
+                            fn = mapping.setdefault(img.name, self._norm_name(img.name))
+                            used_imgs[img.name] = img
+                            entry[key] = {"tex": fn}
+                        elif sock_name in ("Base Color", "Emission Color"):
+                            entry[key] = {"value": [round(v, 4) for v in list(sock.default_value)[:3]]}
+                        elif sock_name in ("Roughness", "Metallic", "Alpha"):
+                            entry[key] = {"value": round(float(sock.default_value), 4)}
+                        # Normal 没接贴图时是向量默认值, 不进清单
+                manifest[m.name] = entry
+
+        # 文件名冲突兜底
+        seen = set()
+        for k in list(mapping):
+            v = mapping[k]
+            if v in seen:
+                s2, ext = os.path.splitext(v)
+                i = 2
+                while "%s_%d%s" % (s2, i, ext) in seen:
+                    i += 1
+                mapping[k] = "%s_%d%s" % (s2, i, ext)
+            seen.add(mapping[k])
+
+        # 2. 贴图落盘(打包图写副本, 磁盘图复制, 不动工程)
+        saved, missing = [], []
+        for name, img in used_imgs.items():
+            dst = os.path.join(tex_dir, mapping[name])
+            try:
+                if img.packed_file:
+                    img.save_render(dst)
+                elif img.filepath and os.path.exists(bpy.path.abspath(img.filepath)):
+                    shutil.copy2(bpy.path.abspath(img.filepath), dst)
+                else:
+                    missing.append(name)
+                    continue
+                saved.append(mapping[name])
+            except Exception as e:
+                missing.append("%s(%s)" % (name, str(e)[:40]))
+
+        # 3. 清单落盘
+        manifest_path = os.path.join(proj_dir, stem + "_材质清单.json")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump({"textures_dir": "textures_c4d", "materials": manifest}, f,
+                      ensure_ascii=False, indent=1)
+
+        # 4. abc 导出, 返回值必须查, 静默取消要大声说
+        abc_path = os.path.join(proj_dir, stem + "_c4d.abc")
+        sc = context.scene
+        r = bpy.ops.pond.export_c4d_abc(filepath=abc_path,
+                                        frame_start=sc.frame_start, frame_end=sc.frame_end)
+        if "FINISHED" not in r or not os.path.exists(abc_path):
+            self.report({"ERROR"}, "abc 导出没有完成, 本次产物只有贴图和清单, 看控制台找原因")
+            return {"CANCELLED"}
+
+        # 5. 生成配套 C4D 重建脚本
+        script_path = os.path.join(proj_dir, stem + "_c4d材质重建.py")
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(_C4D_REBUILD_TEMPLATE.format(stem=stem, manifest=manifest_path))
+
+        abc_mb = os.path.getsize(abc_path) // (1024 * 1024)
+        msg = "一条龙完成: 贴图 %d 张, 材质 %d 个, abc %dMB, C4D 脚本已生成" % (
+            len(saved), len(manifest), abc_mb)
+        if missing:
+            msg += "; 贴图缺失 %d 张: %s" % (len(missing), ", ".join(missing[:4]))
+        self.report({"WARNING" if missing else "INFO"}, msg)
+        return {"FINISHED"}
+
+
 _classes = (
     POND_OT_export_c4d,
     POND_OT_export_c4d_abc,
     POND_OT_import_c4d_restore,
     POND_OT_export_mat_manifest,
+    POND_OT_export_c4d_full,
 )
 
 

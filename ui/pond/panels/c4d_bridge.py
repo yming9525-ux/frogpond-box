@@ -17,6 +17,8 @@ class POND_PT_c4d(bpy.types.Panel):
 
     def draw(self, context):
         col = self.layout.column(align=True)
+        col.operator("pond.export_c4d_full", icon="FUND")
+        col.separator()
         col.operator("pond.export_c4d", icon="EXPORT")
         col.operator("pond.export_c4d_abc", icon="RENDER_ANIMATION")
         col.operator("pond.import_c4d_restore", icon="IMPORT")
