@@ -619,6 +619,30 @@ def t_reg_palette_keep():
     return "用户的留着, 导入的照删"
 step("防回潮", "色卡不删用户自建调色板", t_reg_palette_keep)
 
+def t_reg_split_keep():
+    """基础网格为空的物体(几何节点生成形体那种)不许被空壳清理删掉"""
+    clean_scene()
+    me = bpy.data.meshes.new("空网格")
+    o = bpy.data.objects.new("GN物体", me)
+    bpy.context.scene.collection.objects.link(o)
+    o.modifiers.new("几何节点", 'NODES')
+    select_only(o)
+    try:
+        bpy.ops.pond.split()
+        msg = ""
+    except RuntimeError as e:
+        msg = str(e)
+    assert "GN物体" in bpy.data.objects, "用户的物体被删了"
+    assert "基础网格是空的" in msg, "没给出说人话的提示: %s" % msg[:80]
+    # 一整块的普通物体也不许误删
+    clean_scene()
+    a = new_cube("一整块")
+    select_only(a)
+    bpy.ops.pond.split()
+    assert "一整块" in bpy.data.objects, "一整块的物体被误删了"
+    return "空网格和一整块都保住了"
+step("防回潮", "拆分不删用户物体", t_reg_split_keep)
+
 # ---------- 输出 ----------
 with open(OUT, "w", encoding="utf-8") as f:
     json.dump({"blender": bpy.app.version_string, "results": RESULTS}, f, ensure_ascii=False, indent=1)

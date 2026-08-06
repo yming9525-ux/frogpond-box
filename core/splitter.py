@@ -33,6 +33,13 @@ class POND_OT_split(bpy.types.Operator):
 
         before = set(context.scene.objects)
         v_before = len(obj.data.vertices)
+        # 基础网格是空的(形体来自几何节点那种): separate 会静默取消,
+        # 走到下面的空壳清理就把物体本体删了。先拦住
+        if v_before == 0:
+            self.report({"ERROR"},
+                        "基础网格是空的，没有可拆的顶点。"
+                        "形体要是几何节点生成的，先应用修改器再拆")
+            return {"CANCELLED"}
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_all(action="SELECT")
         # 拆之前先按距离焊点：重合没焊上的顶点会让一块被误拆成碎渣
@@ -51,11 +58,14 @@ class POND_OT_split(bpy.types.Operator):
             return {"CANCELLED"}
         bpy.ops.object.mode_set(mode="OBJECT")
 
-        pieces = [o for o in context.scene.objects if o not in before] + [obj]
-        # 原物体可能被拆空(全分出去了),清掉空壳
+        made = [o for o in context.scene.objects if o not in before]
+        pieces = made + [obj]
+        # 原物体可能被拆空(全分出去了),清掉空壳。
+        # 但没分出任何东西时,本体一根手指都不许动
         alive = []
         for o in pieces:
-            if o.type == "MESH" and len(o.data.vertices) == 0:
+            empty = o.type == "MESH" and len(o.data.vertices) == 0
+            if empty and (o is not obj or made):
                 bpy.data.objects.remove(o, do_unlink=True)
             else:
                 alive.append(o)
