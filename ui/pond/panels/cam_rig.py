@@ -16,9 +16,16 @@ class POND_PT_cam_rig(bpy.types.Panel):
     poll = module_enabled("show_cam_rig")
 
     def draw(self, context):
-        col = self.layout.column(align=True)
-        col.operator("pond.cam_rig_build", icon="CAMERA_DATA")
-        col.label(text="对准名字可以自己改", icon="INFO")
+        layout = self.layout
+        col = layout.column(align=True)
+        col.operator("pond.make_cam_rig", icon="CAMERA_DATA")
+        col.label(text="根管位置 环绕层管转", icon="INFO")
+        col.label(text="注视球管朝向 对焦块管景深")
+        layout.separator()
+        col = layout.column(align=True)
+        col.operator("pond.cam_rig_build", icon="CON_CAMERASOLVER")
+        col.label(text="三级机组, 直接盯住选中的物体", icon="INFO")
+        col.label(text="对准名字可以自己改")
 
 
 _classes = (

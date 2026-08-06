@@ -164,7 +164,40 @@ def t_cam():
     cams = [o for o in bpy.data.objects if o.type == 'CAMERA']
     assert cams, "没生成摄像机"
     return "对象数=%d" % len(bpy.data.objects)
-step("摄像机组", "一键搭建", t_cam)
+step("摄像机组", "简洁机组一键搭建", t_cam)
+
+def t_cam_film():
+    """短片机组：五件套齐全, 两个目标各司其职（她惯用的那套, 别再被合并覆盖）"""
+    clean_scene()
+    a = new_cube("film_target")
+    select_only(a)
+    bpy.ops.pond.make_cam_rig()
+    need = {"CAM_根", "CAM_环绕层", "短片摄像机", "CAM_注视目标", "CAM_对焦目标"}
+    missing = need - set(bpy.data.objects.keys())
+    assert not missing, "少了: %s" % missing
+    cam = bpy.data.objects["短片摄像机"]
+    track = next((c for c in cam.constraints if c.type == "TRACK_TO"), None)
+    assert track and track.target.name == "CAM_注视目标", "注视目标没接上"
+    assert cam.data.dof.focus_object.name == "CAM_对焦目标", "对焦目标没接上"
+    assert cam.data.show_passepartout, "黑框没开"
+    return "五件套齐全, 注视/对焦各自独立"
+step("摄像机组", "短片机组五件套", t_cam_film)
+
+def t_cam_empty():
+    """删光机组后 active 会变 None, 两个按钮都不许变灰"""
+    clean_scene()
+    bpy.context.view_layer.objects.active = None
+    assert bpy.ops.pond.cam_rig_build.poll(), "简洁机组按钮变灰了"
+    assert bpy.ops.pond.make_cam_rig.poll(), "短片机组按钮变灰了"
+    bpy.ops.pond.cam_rig_build()
+    assert bpy.data.objects.get("镜头Cam"), "空场景搭不出简洁机组"
+    clean_scene()
+    bpy.context.view_layer.objects.active = None
+    bpy.ops.pond.make_cam_rig()
+    root = bpy.data.objects.get("CAM_根")
+    assert root and root.location.length < 1e-6, "空场景没以原点为中心"
+    return "两个按钮空场景都能点"
+step("摄像机组", "空场景按钮不变灰", t_cam_empty)
 
 # ---------- 8. 图转立体 trace2solid ----------
 def t_trace():
