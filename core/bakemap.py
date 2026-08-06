@@ -473,9 +473,11 @@ class POND_OT_bakemap(bpy.types.Operator):
             return {"CANCELLED"}
         mat = _build_baked_mat(base, images, uv_name, bump_params)
         for o in objs:
-            o["pond_bake_orig"] = json.dumps(
-                [s.material.name if s.material else "" for s in o.material_slots],
-                ensure_ascii=False)
+            # 已经记过就不再覆盖：穿着烘焙材质重烘时会把记录写成烘焙材质自己
+            if "pond_bake_orig" not in o:
+                o["pond_bake_orig"] = json.dumps(
+                    [s.material.name if s.material else ""
+                     for s in o.material_slots], ensure_ascii=False)
             o["pond_bake_mat"] = mat.name
         tip = "合烘 %d 件·" % len(objs) if multi else ""
         self.report({"INFO"},
@@ -519,6 +521,11 @@ class POND_OT_bakemap_use_baked(bpy.types.Operator):
                     [s.material.name if s.material else ""
                      for s in obj.material_slots],
                     ensure_ascii=False)
+            # 摘下来的原材质会变零用户, 保存时被 Blender 清掉就再也切不回去
+            # 挂上假用户保命, 切回原材质时再摘掉
+            for s in obj.material_slots:
+                if s.material and s.material is not mat:
+                    s.material.use_fake_user = True
             obj.data.materials.clear()
             obj.data.materials.append(mat)
             n += 1
@@ -548,8 +555,18 @@ class POND_OT_bakemap_use_orig(bpy.types.Operator):
                 self.report({"WARNING"}, f"{obj.name} 的原材质记录坏了，跳过")
                 continue
             obj.data.materials.clear()
+            missing = []
             for nm in names:
-                obj.data.materials.append(bpy.data.materials.get(nm) if nm else None)
+                m = bpy.data.materials.get(nm) if nm else None
+                if nm and m is None:
+                    missing.append(nm)
+                obj.data.materials.append(m)
+                if m is not None:
+                    m.use_fake_user = False   # 回到槽位上了, 假用户可以摘掉
+            if missing:
+                self.report({"WARNING"},
+                            "%s 的原材质找不到了: %s（可能是旧工程存盘时被清掉的）"
+                            % (obj.name, "、".join(missing[:3])))
             done += 1
         self.report({"INFO"}, f"{done} 件切回原材质")
         return {"FINISHED"}

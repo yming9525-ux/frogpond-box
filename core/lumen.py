@@ -101,8 +101,15 @@ def _restore(context, state):
 
 
 def _get_state(wm):
-    raw = wm.pond_lumen_state
+    """状态存在场景上(跟着工程走), 老工程可能还存在 WindowManager 上, 一并认"""
+    raw = getattr(bpy.context.scene, "pond_lumen_state", "") or wm.pond_lumen_state
     return json.loads(raw) if raw else None
+
+
+def _put_state(context, raw):
+    """白膜会改灯色, 状态必须跟着工程存盘, 不然保存重开灯色回不来"""
+    context.scene.pond_lumen_state = raw
+    context.window_manager.pond_lumen_state = raw
 
 
 def _clear_if_active(context):
@@ -111,7 +118,7 @@ def _clear_if_active(context):
     state = _get_state(wm)
     if state:
         _restore(context, state)
-        wm.pond_lumen_state = ""
+        _put_state(context, "")
         return state.get("mode")
     return None
 
@@ -136,7 +143,7 @@ class _LumenToggle:
             _restore(context, state)
             self.report({"ERROR"}, f"开不起来：{e}")
             return {"CANCELLED"}
-        wm.pond_lumen_state = json.dumps(state)
+        _put_state(context, json.dumps(state))
         return {"FINISHED"}
 
 
@@ -198,6 +205,8 @@ _classes = (
 
 def register():
     bpy.types.WindowManager.pond_lumen_state = bpy.props.StringProperty(default="")
+    # 场景属性会存进 .blend, 白膜改过的灯色保存重开也还原得回来
+    bpy.types.Scene.pond_lumen_state = bpy.props.StringProperty(default="")
     for c in _classes:
         bpy.utils.register_class(c)
 
@@ -205,4 +214,5 @@ def register():
 def unregister():
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)
+    del bpy.types.Scene.pond_lumen_state
     del bpy.types.WindowManager.pond_lumen_state

@@ -41,15 +41,36 @@ def _checked_objs(op, context):
     return objs
 
 
+def _in_view_layer(obj, context=None):
+    """在不在当前视图层：集合被排除的物体 select_set 会抛异常。
+    visible_get 对这类物体不报错(探不出来), 得直接查视图层的物体表"""
+    vl = (context or bpy.context).view_layer
+    return vl.objects.get(obj.name) is obj
+
+
 def _release_children(obj):
-    """释放 obj 的下级：有上级则转给上级，否则放到世界层级"""
+    """释放 obj 的下级：有上级则转给上级，否则放到世界层级
+    小眼睛藏着的子级 select_set 会静默失败, 临时点亮再藏回去;
+    不在当前视图层的(集合被排除)选不了, 直接改父级兜底"""
     for ch in get_children(obj):
-        ch.select_set(True)
-        bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
-        if obj.parent:
-            bpy.context.view_layer.objects.active = obj.parent
-            bpy.ops.object.parent_no_inverse_set(keep_transform=True)
-        ch.select_set(False)
+        if not _in_view_layer(ch):
+            # 选不了就不走操作符, 直接改父级并保住世界变换
+            with _Ctx(ch):
+                ch.parent = obj.parent
+            continue
+        was_hidden = ch.hide_get()
+        if was_hidden:
+            ch.hide_set(False)
+        try:
+            ch.select_set(True)
+            bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
+            if obj.parent:
+                bpy.context.view_layer.objects.active = obj.parent
+                bpy.ops.object.parent_no_inverse_set(keep_transform=True)
+            ch.select_set(False)
+        finally:
+            if was_hidden:
+                ch.hide_set(True)
 
 
 class _Ctx:
@@ -110,10 +131,29 @@ class POND_OT_select_parents(bpy.types.Operator):
         if not parents:
             self.report({"WARNING"}, "所选都没有父级")
             return {"CANCELLED"}
+        # 先筛掉选不了的(集合被排除),够不着就别清空用户的选择
+        reachable = [p for p in parents if _in_view_layer(p, context)]
+        skipped = len(parents) - len(reachable)
+        if not reachable:
+            self.report({"ERROR"},
+                        "父级都在被排除的集合里，选不了。"
+                        "去大纲把那个集合的勾选打开再来")
+            return {"CANCELLED"}
         bpy.ops.object.select_all(action="DESELECT")
-        for p in parents:
+        hidden = 0
+        for p in reachable:
+            if p.hide_get():          # 小眼睛藏着的选不上, 点亮才选得中
+                p.hide_set(False)
+                hidden += 1
             p.select_set(True)
-        context.view_layer.objects.active = next(iter(parents))
+        context.view_layer.objects.active = reachable[0]
+        msg = []
+        if skipped:
+            msg.append("%d 个父级在被排除的集合里，跳过了" % skipped)
+        if hidden:
+            msg.append("%d 个父级原本藏着，帮你点亮了" % hidden)
+        if msg:
+            self.report({"WARNING"}, "，".join(msg))
         return {"FINISHED"}
 
 

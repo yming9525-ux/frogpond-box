@@ -665,6 +665,7 @@ class POND_OT_export_c4d_full(bpy.types.Operator):
 
         # 1. 收集可见网格的 Principled 通道, 顺便记对象用了哪些材质(C4D 侧按名赋回)
         mapping, manifest, used_imgs, obj_map = {}, {}, {}, {}
+        tex_refs = []      # (清单里的通道字典, 图像数据块名), 去重改名后按这个回填
         for o in bpy.data.objects:
             if o.type != "MESH" or not o.visible_get():
                 continue
@@ -687,6 +688,7 @@ class POND_OT_export_c4d_full(bpy.types.Operator):
                             fn = mapping.setdefault(img.name, self._norm_name(img.name))
                             used_imgs[img.name] = img
                             entry[key] = {"tex": fn}
+                            tex_refs.append((entry[key], img.name))
                         elif sock_name in ("Base Color", "Emission Color"):
                             entry[key] = {"value": [round(v, 4) for v in list(sock.default_value)[:3]]}
                         elif sock_name in ("Roughness", "Metallic", "Alpha"):
@@ -694,8 +696,9 @@ class POND_OT_export_c4d_full(bpy.types.Operator):
                         # Normal 没接贴图时是向量默认值, 不进清单
                 manifest[m.name] = entry
 
-        # 文件名冲突兜底
-        seen = set()
+        # 文件名冲突兜底。清单里记的是去重前的名字, 改完要同步回去,
+        # 不然两张不同的图在清单里指向同一个文件名, C4D 那边会贴错
+        seen, renamed = set(), {}
         for k in list(mapping):
             v = mapping[k]
             if v in seen:
@@ -704,7 +707,10 @@ class POND_OT_export_c4d_full(bpy.types.Operator):
                 while "%s_%d%s" % (s2, i, ext) in seen:
                     i += 1
                 mapping[k] = "%s_%d%s" % (s2, i, ext)
+                renamed[k] = mapping[k]
             seen.add(mapping[k])
+        for ch, img_name in tex_refs:      # 按收集时记下的出处回填
+            ch["tex"] = mapping[img_name]
 
         # 2. 贴图落盘(打包图写副本, 磁盘图复制, 不动工程)
         saved, missing = [], []

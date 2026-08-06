@@ -385,6 +385,164 @@ def t_six():
     return "材质=%s" % a.material_slots[0].material.name
 step("六面投射", "识别六图+搭投影材质", t_six)
 
+# ---------- 17. 防回潮：修过的 bug 逐条盯着 ----------
+
+def t_reg_lumen_state():
+    """明度检查状态必须存在场景上,存 WindowManager 会随工程保存丢失"""
+    bpy.context.scene.pond_lumen_state = json.dumps({"mode": "CLAY"})
+    p = os.path.join(TMP, "reg_lumen.blend")
+    bpy.ops.wm.save_as_mainfile(filepath=p)
+    bpy.ops.wm.open_mainfile(filepath=p)
+    v = bpy.context.scene.pond_lumen_state
+    assert v and json.loads(v).get("mode") == "CLAY", "状态没跟着工程存盘"
+    bpy.context.scene.pond_lumen_state = ""
+    return "存盘重开后状态还在"
+step("防回潮", "明度检查状态跟着工程走", t_reg_lumen_state)
+
+def t_reg_select_parents():
+    """父级在被排除的集合里:说人话报错,不清空用户选择,不弹traceback"""
+    clean_scene()
+    c = bpy.data.collections.new("排除组")
+    bpy.context.scene.collection.children.link(c)
+    par = bpy.data.objects.new("父空物体", None)
+    c.objects.link(par)
+    ch = new_cube("孩子")
+    ch.parent = par
+    bpy.context.view_layer.layer_collection.children["排除组"].exclude = True
+    select_only(ch)
+    try:
+        bpy.ops.pond.select_parents()
+        msg = ""
+    except RuntimeError as e:
+        msg = str(e)
+    assert "被排除的集合" in msg, "没给出说人话的提示: %s" % msg[:80]
+    assert ch.select_get(), "用户原来的选择被清空了"
+    return "友好报错且保住选择"
+step("防回潮", "选父级遇排除集合", t_reg_select_parents)
+
+def t_reg_release_hidden():
+    """小眼睛藏着的子级也要正常释放给上一层,且保持藏着"""
+    clean_scene()
+    grand = new_cube("爷爷", (0, 0, 4))
+    par = new_cube("拎出目标")
+    par.parent = grand
+    kid = new_cube("藏起来的孩子", (2, 0, 0))
+    kid.parent = par
+    kid.hide_set(True)
+    select_only(par)
+    bpy.ops.object.solo_pick_visn()
+    assert kid.parent is grand, "隐藏子级没释放给上一层: %s" % (
+        kid.parent.name if kid.parent else None)
+    assert kid.hide_get(), "释放后没把子级藏回去"
+    return "归给上一层且仍藏着"
+step("防回潮", "隐藏子级正常释放", t_reg_release_hidden)
+
+def t_reg_fake_user():
+    """切到烘焙材质后原材质要挂假用户,不然存盘被清掉再也切不回来"""
+    clean_scene()
+    a = new_cube("fu")
+    orig = bpy.data.materials.new("防丢原材质"); orig.use_nodes = True
+    a.data.materials.append(orig)
+    baked = bpy.data.materials.new("烘焙材质_fu"); baked.use_nodes = True
+    a["pond_bake_mat"] = baked.name
+    select_only(a)
+    bpy.ops.pond.bakemap_use_baked()
+    assert orig.use_fake_user, "原材质没挂假用户"
+    p = os.path.join(TMP, "reg_fake.blend")
+    bpy.ops.wm.save_as_mainfile(filepath=p)
+    bpy.ops.wm.open_mainfile(filepath=p)
+    assert bpy.data.materials.get("防丢原材质"), "保存重开后原材质丢了"
+    return "假用户保住原材质"
+step("防回潮", "烘焙切换不丢原材质", t_reg_fake_user)
+
+def t_reg_no_overwrite():
+    """穿着烘焙材质重烘,原材质记录不许被改写成烘焙材质自己"""
+    clean_scene()
+    bpy.ops.wm.save_as_mainfile(filepath=blend_path)
+    a = new_cube("rb")
+    m = bpy.data.materials.new("重烘原材质"); m.use_nodes = True
+    nt = m.node_tree
+    noise = nt.nodes.new("ShaderNodeTexNoise")
+    bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
+    nt.links.new(noise.outputs["Color"], bsdf.inputs["Base Color"])
+    a.data.materials.append(m)
+    select_only(a)
+    bpy.context.scene.render.engine = 'CYCLES'
+    wm = bpy.context.window_manager
+    wm.pond_bake_res = '512'
+    wm.pond_bake_color = True
+    wm.pond_bake_rough = False
+    bpy.ops.pond.bakemap()
+    first = json.loads(a["pond_bake_orig"])
+    bpy.ops.pond.bakemap_use_baked()
+    select_only(a)
+    bpy.ops.pond.bakemap()
+    second = json.loads(a["pond_bake_orig"])
+    assert first == second == ["重烘原材质"], "记录被覆盖: %s → %s" % (first, second)
+    return "重烘后记录不变"
+step("防回潮", "重烘不覆盖原材质记录", t_reg_no_overwrite)
+
+def t_reg_manifest_dedup():
+    """规范化后重名的两张贴图,清单里要各指各的文件"""
+    clean_scene()
+    a = new_cube("md_a"); b = new_cube("md_b", (4, 0, 0))
+    for objx, iname, col in ((a, "tex", (1,0,0,1)), (b, "tex.png", (0,0,1,1))):
+        img = bpy.data.images.new(iname, 8, 8)
+        img.generated_color = col
+        img.pack()
+        m = bpy.data.materials.new("重名材质_" + iname); m.use_nodes = True
+        nt = m.node_tree
+        t = nt.nodes.new("ShaderNodeTexImage"); t.image = img
+        bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
+        nt.links.new(t.outputs["Color"], bsdf.inputs["Base Color"])
+        objx.data.materials.append(m)
+    cam = bpy.data.objects.new("md_cam", bpy.data.cameras.new("mc"))
+    bpy.context.scene.collection.objects.link(cam)
+    bpy.context.scene.camera = cam
+    p = os.path.join(TMP, "md_v001.blend")
+    bpy.ops.wm.save_as_mainfile(filepath=p)
+    bpy.ops.object.select_all(action='DESELECT')
+    a.select_set(True); b.select_set(True)
+    bpy.context.view_layer.objects.active = a
+    bpy.ops.pond.export_c4d_full()
+    with open(os.path.join(TMP, "md_v001_材质清单.json"), encoding="utf-8") as f:
+        d = json.load(f)
+    texs = sorted(e["basecolor"]["tex"] for e in d["materials"].values()
+                  if isinstance(e.get("basecolor"), dict) and "tex" in e["basecolor"])
+    assert len(texs) == 2 and texs[0] != texs[1], "重名贴图指向同一个文件: %s" % texs
+    return "各指各的: %s" % texs
+step("防回潮", "一条龙重名贴图不串", t_reg_manifest_dedup)
+
+def t_reg_hilow_uv():
+    """法线图必须指定UV层,不然多UV低模的采样层和烘焙落点对不上"""
+    clean_scene()
+    bpy.ops.wm.save_as_mainfile(filepath=blend_path)
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=12)
+    high = bpy.context.active_object; high.name = "hu_高"
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=8, ring_count=6)
+    low = bpy.context.active_object; low.name = "hu_低"
+    me = low.data
+    uv1 = me.uv_layers.new(name="第二套UV")
+    me.uv_layers[0].active_render = True
+    me.uv_layers.active = uv1
+    m = bpy.data.materials.new("多UV低模材质"); m.use_nodes = True
+    low.data.materials.append(m)
+    wm = bpy.context.window_manager
+    wm.pond_hilow_res = '512'; wm.pond_hilow_normal = True
+    wm.pond_hilow_ao = False; wm.pond_hilow_color = False; wm.pond_hilow_rough = False
+    bpy.ops.object.select_all(action='DESELECT')
+    high.select_set(True); low.select_set(True)
+    bpy.context.view_layer.objects.active = low
+    bpy.ops.pond.hilow_bake()
+    nt = m.node_tree
+    tex = nt.nodes.get("池塘高低法线图")
+    assert tex and tex.inputs["Vector"].is_linked, "法线贴图没接UV节点"
+    uvn = nt.nodes.get("池塘高低法线UV")
+    assert uvn and uvn.uv_map == "第二套UV", "UV节点指错层: %s" % (
+        uvn.uv_map if uvn else None)
+    return "采样层=烘焙落点=第二套UV"
+step("防回潮", "高低法线图指定UV层", t_reg_hilow_uv)
+
 # ---------- 输出 ----------
 with open(OUT, "w", encoding="utf-8") as f:
     json.dump({"blender": bpy.app.version_string, "results": RESULTS}, f, ensure_ascii=False, indent=1)

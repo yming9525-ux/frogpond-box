@@ -94,6 +94,15 @@ def _plug_normal(mats, img, uv_name):
             nm.location = (bsdf.location.x - 300, bsdf.location.y - 560)
         if uv_name:
             nm.uv_map = uv_name
+            # 贴图也要指定同一层。不接的话采样走渲染层,
+            # 低模有两套UV且选中的不是渲染层时, 烘焙落点和采样对不上, 法线会花
+            uvn = nt.nodes.get("池塘高低法线UV")
+            if uvn is None:
+                uvn = nt.nodes.new("ShaderNodeUVMap")
+                uvn.name = uvn.label = "池塘高低法线UV"
+                uvn.location = (bsdf.location.x - 840, bsdf.location.y - 560)
+            uvn.uv_map = uv_name
+            nt.links.new(uvn.outputs["UV"], tex.inputs["Vector"])
         nt.links.new(tex.outputs["Color"], nm.inputs["Color"])
         nt.links.new(nm.outputs["Normal"], sock)
         done += 1
