@@ -7,7 +7,7 @@ bl_info = {
     "blender": (5, 2, 0),  # 仅支持 Blender 5.2
     "location": "View3D > Sidebar（N 面板）",
     "description": "蛙灾的池塘工具箱：整理 / 制作 / 灯渲 / 动画",
-    "version": (1, 2, 1),
+    "version": (1, 2, 2),
 }
 
 import bpy

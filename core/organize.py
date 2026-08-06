@@ -32,6 +32,14 @@ class POND_OT_origin_to_side(bpy.types.Operator):
         default="BOTTOM",
     )
 
+    unlink_shared: bpy.props.BoolProperty(
+        name="断开关联复制",
+        default=False,
+        description="关联复制(Alt+D)的物体共用一份网格，动原点会连累其他复制体。"
+                    "默认跳过它们；勾上=给所选的那些各复制一份网格再吸附，"
+                    "复制体之间从此互不影响",
+    )
+
     @classmethod
     def poll(cls, context):
         return context.selected_objects and context.mode == "OBJECT"
@@ -42,6 +50,23 @@ class POND_OT_origin_to_side(bpy.types.Operator):
         if not sel:
             self.report({"WARNING"}, "所选里没有带几何的物体")
             return {"CANCELLED"}
+
+        # 共用网格的物体：动原点会平移网格数据本身，没选中的复制体跟着跑位
+        shared = [o for o in sel if o.data and o.data.users > 1]
+        unlinked = 0
+        if shared:
+            if self.unlink_shared:
+                for o in shared:
+                    o.data = o.data.copy()
+                    unlinked += 1
+            else:
+                names = {o.name for o in shared}
+                sel = [o for o in sel if o.name not in names]
+                if not sel:
+                    self.report({"WARNING"},
+                                "所选都是关联复制体，动原点会连累其他复制体，"
+                                "全跳过了。真要吸就在下面勾「断开关联复制」")
+                    return {"CANCELLED"}
 
         axis, pick = _SIDES[self.side]
 
@@ -70,6 +95,13 @@ class POND_OT_origin_to_side(bpy.types.Operator):
             for o in selected_backup:
                 o.select_set(True)
             context.view_layer.objects.active = active_backup
+        if unlinked:
+            self.report({"INFO"},
+                        "%d 件断开了关联复制（各自复制了一份网格）" % unlinked)
+        elif shared:
+            self.report({"WARNING"},
+                        "%d 件是关联复制体，跳过了（动它们会连累其他复制体，"
+                        "真要吸就在下面勾「断开关联复制」）" % len(shared))
         return {"FINISHED"}
 
 

@@ -297,6 +297,12 @@ class POND_OT_palette_delete(bpy.types.Operator):
         ts = context.tool_settings
         # 挂载失败也要能删：先找挂着的，找不到就删最新导入的那块
         pal = _active_palette(context) or getattr(ts.vertex_paint, "palette", None)
+        # 只删本模块导入生成的色卡。用户自己建的调色板一概不碰
+        if pal is not None and not pal.name.endswith("_色卡"):
+            self.report({"WARNING"},
+                        "「%s」是你自己的调色板，本按钮只删导入的色卡。"
+                        "真要删它去 Blender 的调色板列表里删" % pal.name)
+            return {"CANCELLED"}
         if not pal:
             cards = [p for p in bpy.data.palettes if p.name.endswith("_色卡")]
             if not cards:

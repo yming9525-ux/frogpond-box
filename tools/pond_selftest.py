@@ -543,6 +543,49 @@ def t_reg_hilow_uv():
     return "采样层=烘焙落点=第二套UV"
 step("防回潮", "高低法线图指定UV层", t_reg_hilow_uv)
 
+def t_reg_origin_shared():
+    """关联复制(共用网格)的物体默认跳过,不许连累没选中的复制体"""
+    clean_scene()
+    a = new_cube("链接A")
+    b = bpy.data.objects.new("链接B", a.data)   # Alt+D 共用网格
+    b.location = (5, 0, 0)
+    bpy.context.scene.collection.objects.link(b)
+    bpy.context.view_layer.update()
+    before = min((b.matrix_world @ v.co).z for v in b.data.vertices)
+    select_only(a)
+    r = bpy.ops.pond.origin_to_side(side='BOTTOM')
+    bpy.context.view_layer.update()
+    after = min((b.matrix_world @ v.co).z for v in b.data.vertices)
+    assert abs(before - after) < 1e-5, "没选中的复制体被挪走了: %.3f→%.3f" % (before, after)
+    assert r == {"CANCELLED"}, "全跳过时应返回 CANCELLED, 实际 %s" % r
+    # 勾上断开关联就能吸, 且各自分家互不影响
+    select_only(a)
+    bpy.ops.pond.origin_to_side(side='BOTTOM', unlink_shared=True)
+    bpy.context.view_layer.update()
+    assert a.data is not b.data, "断开关联后网格没分家"
+    a_low = min((a.matrix_world @ v.co).z for v in a.data.vertices)
+    assert abs(a_low - a.matrix_world.translation.z) < 1e-4, "断开后原点没落到底"
+    b2 = min((b.matrix_world @ v.co).z for v in b.data.vertices)
+    assert abs(before - b2) < 1e-5, "断开关联后复制体仍被连累"
+    return "默认跳过, 勾断开后各归各的"
+step("防回潮", "原点吸附不连累关联复制体", t_reg_origin_shared)
+
+def t_reg_palette_keep():
+    """删除当前色卡只删本模块导入的,用户自建的调色板一概不碰"""
+    mine = bpy.data.palettes.new("用户自建配色")
+    bpy.context.tool_settings.image_paint.palette = mine
+    r = bpy.ops.pond.palette_delete()
+    assert bpy.data.palettes.get("用户自建配色"), "用户自建的调色板被删了"
+    assert r == {"CANCELLED"}, "不该删时应返回 CANCELLED, 实际 %s" % r
+    card = bpy.data.palettes.new("测试图_色卡")
+    bpy.context.tool_settings.image_paint.palette = card
+    bpy.ops.pond.palette_delete()
+    assert bpy.data.palettes.get("测试图_色卡") is None, "导入的色卡删不掉了"
+    assert bpy.data.palettes.get("用户自建配色"), "误删了用户的调色板"
+    bpy.data.palettes.remove(mine)
+    return "用户的留着, 导入的照删"
+step("防回潮", "色卡不删用户自建调色板", t_reg_palette_keep)
+
 # ---------- 输出 ----------
 with open(OUT, "w", encoding="utf-8") as f:
     json.dump({"blender": bpy.app.version_string, "results": RESULTS}, f, ensure_ascii=False, indent=1)
