@@ -35,14 +35,24 @@ def _make_bw_tree():
 CLAY_MAT_NAME = "池塘_白膜AO"
 
 
-def _make_clay_mat():
-    """白膜材质: 环境光遮蔽AO颜色 → 原理化基础色, 糙度1(照她给的节点图)"""
-    mat = bpy.data.materials.get(CLAY_MAT_NAME)
-    if mat:
-        return mat
-    mat = bpy.data.materials.new(CLAY_MAT_NAME)
-    mat.use_nodes = True
-    nt = mat.node_tree
+# 白膜的两个颜色, 想调深浅改这里, 或者直接在着色器编辑器里点那两个颜色节点
+CLAY_SHADOW = (0.75, 0.75, 0.75, 1.0)   # AO 遮住的地方(缝隙, 凹处)
+CLAY_LIGHT = (1.0, 1.0, 1.0, 1.0)       # 开阔的地方
+CLAY_ROUGHNESS = 0.5
+
+
+def _mix_socket(node, name, want, out=False):
+    """混合节点同名接口有好几个(浮点/向量/颜色各一套), 按类型挑出能用的那个"""
+    for s in (node.outputs if out else node.inputs):
+        if s.name == name and s.enabled and s.type == want:
+            return s
+    raise KeyError("%s.%s.%s" % (node.bl_idname, name, want))
+
+
+def _build_clay_nodes(nt):
+    """按岁岁 2026-08-22 给的节点图搭:
+    AO 颜色当混合系数, 在暗色和亮色之间插值, 结果进原理化基础色, 糙度 0.5
+    """
     nt.nodes.clear()
     out = nt.nodes.new("ShaderNodeOutputMaterial")
     out.location = (420, 0)
@@ -50,13 +60,51 @@ def _make_clay_mat():
     bsdf.location = (100, 0)
     r = bsdf.inputs.get("Roughness")
     if r is not None:
-        r.default_value = 1.0
+        r.default_value = CLAY_ROUGHNESS
+
     ao = nt.nodes.new("ShaderNodeAmbientOcclusion")
-    ao.location = (-160, 60)
+    ao.location = (-500, 140)
     ao.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+    ao.inputs["Distance"].default_value = 1.0
     ao.samples = 16
-    nt.links.new(ao.outputs["Color"], bsdf.inputs["Base Color"])
+    ao.inside = False
+    ao.only_local = False
+
+    shadow = nt.nodes.new("ShaderNodeRGB")
+    shadow.location = (-500, -80)
+    shadow.outputs[0].default_value = CLAY_SHADOW
+    light = nt.nodes.new("ShaderNodeRGB")
+    light.location = (-500, -300)
+    light.outputs[0].default_value = CLAY_LIGHT
+
+    mix = nt.nodes.new("ShaderNodeMix")
+    mix.data_type = "RGBA"
+    mix.blend_type = "MIX"
+    mix.clamp_factor = True
+    mix.clamp_result = False
+    mix.location = (-180, 20)
+
+    nt.links.new(ao.outputs["Color"], _mix_socket(mix, "Factor", "VALUE"))
+    nt.links.new(shadow.outputs[0], _mix_socket(mix, "A", "RGBA"))
+    nt.links.new(light.outputs[0], _mix_socket(mix, "B", "RGBA"))
+    nt.links.new(_mix_socket(mix, "Result", "RGBA", out=True), bsdf.inputs["Base Color"])
     nt.links.new(bsdf.outputs[0], out.inputs["Surface"])
+
+
+def _make_clay_mat():
+    """白膜材质: AO 当混合系数在暗色和亮色之间插值"""
+    mat = bpy.data.materials.get(CLAY_MAT_NAME)
+    if mat:
+        # 工程里可能留着旧版的白膜(AO 直接接基础色), 结构对不上就重搭
+        if mat.use_nodes and mat.node_tree and any(
+                n.bl_idname == "ShaderNodeMix" for n in mat.node_tree.nodes):
+            return mat
+        mat.use_nodes = True
+        _build_clay_nodes(mat.node_tree)
+        return mat
+    mat = bpy.data.materials.new(CLAY_MAT_NAME)
+    mat.use_nodes = True
+    _build_clay_nodes(mat.node_tree)
     return mat
 
 

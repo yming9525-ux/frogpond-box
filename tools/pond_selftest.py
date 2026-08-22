@@ -418,7 +418,85 @@ def t_six():
     return "材质=%s" % a.material_slots[0].material.name
 step("六面投射", "识别六图+搭投影材质", t_six)
 
-# ---------- 17. 防回潮：修过的 bug 逐条盯着 ----------
+# ---------- 17. MMD 刚体关节 mmd ----------
+def _fake_mmd_model():
+    """搭一个假的 mmd_tools 层级。真 mmd_tools 在的话用它的真属性，
+    不在就临时挂一个同名字符串属性顶上（只验池塘这边的逻辑）"""
+    if not hasattr(bpy.types.Object, "mmd_type"):
+        try:
+            addon_utils.enable("bl_ext.blender_org.mmd_tools", default_set=False)
+        except Exception:
+            pass
+    stub = not hasattr(bpy.types.Object, "mmd_type")
+    if stub:
+        bpy.types.Object.mmd_type = bpy.props.StringProperty(default="NONE")
+
+    def emp(name, t, parent=None):
+        o = bpy.data.objects.new(name, None)
+        bpy.context.scene.collection.objects.link(o)
+        o.mmd_type = t
+        if parent:
+            o.parent = parent
+        return o
+
+    root = emp("测试模型", "ROOT")
+    rg = emp("rigidbodies", "RIGID_GRP_OBJ", root)
+    jg = emp("joints", "JOINT_GRP_OBJ", root)
+    items = [emp("刚体%d" % i, "RIGID_BODY", rg) for i in range(2)]
+    items += [emp("关节%d" % i, "JOINT", jg) for i in range(2)]
+    mesh = new_cube("身体")
+    mesh.parent = root
+    return root, [rg, jg] + items, mesh, stub
+
+
+def t_mmd_hide():
+    clean_scene()
+    root, phys, mesh, stub = _fake_mmd_model()
+    bpy.ops.object.select_all(action='DESELECT')
+    bpy.ops.pond.mmd_physics_vis(show=False)
+    off = [o.name for o in phys if not o.hide_viewport]
+    assert not off, "这些没被藏起来: %s" % off
+    assert not mesh.hide_viewport, "网格被误伤了，只该动刚体和关节"
+    bpy.ops.pond.mmd_physics_vis(show=True)
+    on = [o.name for o in phys if o.hide_viewport]
+    assert not on, "放不回来: %s" % on
+    return "%d 个刚体/关节藏得下放得回，网格没动%s" % (len(phys), "（mmd_tools 属性是临时顶替的）" if stub else "")
+step("MMD 刚体关节", "藏起来/放出来", t_mmd_hide)
+
+
+def t_mmd_survives_exclude():
+    """她的原话：每次开关集合刚体又冒出来。
+    这一条盯的是：集合复选框取消再勾回之后，藏起来的刚体关节不许放出来。
+    只断言显示器图标(hide_viewport)。小眼睛(hide_set)存在视图层上，
+    2026-08-22 实测它在简单场景下会被这一下重置、带父子链的场景下又不会，
+    行为看情形，所以不拿它当判据，只在结果里报一下观察值
+    """
+    clean_scene()
+    root, phys, mesh, stub = _fake_mmd_model()
+    c = bpy.data.collections.new("装MMD的集合")
+    bpy.context.scene.collection.children.link(c)
+    for o in [root] + phys + [mesh]:
+        for cc in list(o.users_collection):
+            cc.objects.unlink(o)
+        c.objects.link(o)
+    bpy.context.view_layer.update()
+
+    bpy.ops.object.select_all(action='DESELECT')
+    bpy.ops.pond.mmd_physics_vis(show=False)
+    assert all(o.hide_viewport for o in phys), "藏都没藏上"
+
+    lc = bpy.context.view_layer.layer_collection.children[c.name]
+    lc.exclude = True
+    lc.exclude = False                          # 复选框取消再勾回，复现她说的场景
+
+    out = [o.name for o in phys if not o.hide_viewport]
+    assert not out, "开关集合之后又冒出来了: %s" % out
+    eyes = sum(1 for o in phys if o.hide_get())
+    return "开关集合后 %d 个全都还藏着（同一批里小眼睛只剩 %d 个还关着）" % (len(phys), eyes)
+step("MMD 刚体关节", "开关集合后不会再冒出来", t_mmd_survives_exclude)
+
+
+# ---------- 18. 防回潮：修过的 bug 逐条盯着 ----------
 
 def t_reg_lumen_state():
     """明度检查状态必须存在场景上,存 WindowManager 会随工程保存丢失"""

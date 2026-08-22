@@ -1,12 +1,12 @@
 # 蛙灾模式各模块子面板注册表（每个文件对应 core 同名模块的逻辑）。
 from . import (cam_rig, sixproj, trace2solid, preset_lib, bakemap, hilow,
                splitter, hierarchy, organize, synccheck, lumen, snapshot,
-               lightdesk, palette, c4d_bridge, renderlayers)
+               lightdesk, palette, c4d_bridge, renderlayers, mmd)
 
 _MODULES = (
     cam_rig, sixproj, trace2solid, preset_lib, bakemap, hilow, splitter,
     hierarchy, organize, synccheck, lumen, snapshot, lightdesk,
-    palette, c4d_bridge, renderlayers,
+    palette, c4d_bridge, renderlayers, mmd,
 )
 
 
