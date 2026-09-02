@@ -22,6 +22,7 @@ MODULES = (
     ("show_splitter", "一键拆分"),
     ("show_renderlayers", "分层渲染"),
     ("show_mmd", "MMD 刚体关节"),
+    ("show_keyoffset", "关键帧错开"),
 )
 
 # 根包名（pond_bekkan / Pond / bekkan_visn，随打包版本而定）

@@ -496,7 +496,116 @@ def t_mmd_survives_exclude():
 step("MMD 刚体关节", "开关集合后不会再冒出来", t_mmd_survives_exclude)
 
 
-# ---------- 18. 防回潮：修过的 bug 逐条盯着 ----------
+# ---------- 18. 关键帧错开 keyoffset ----------
+
+def _fake_chain(n=5):
+    """一条 n 节的骨链，每根 K 上第 1 和第 20 帧"""
+    if bpy.context.mode != 'OBJECT':
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        except Exception:
+            pass
+    clean_scene()
+    arm = bpy.data.armatures.new("测试骨架")
+    ob = bpy.data.objects.new("骨链", arm)
+    bpy.context.scene.collection.objects.link(ob)
+    bpy.context.view_layer.objects.active = ob
+    ob.select_set(True)
+
+    bpy.ops.object.mode_set(mode='EDIT')
+    prev = None
+    for i in range(1, n + 1):
+        b = arm.edit_bones.new("Bone_%d" % i)
+        b.head = (0, 0, (i - 1) * 0.2)
+        b.tail = (0, 0, i * 0.2)
+        if prev:
+            b.parent = prev
+            b.use_connect = True
+        prev = b
+    bpy.ops.object.mode_set(mode='POSE')
+
+    for f in (1, 20):
+        bpy.context.scene.frame_set(f)
+        for pb in ob.pose.bones:
+            pb.rotation_quaternion = (1, 0.05 * f, 0, 0)
+            pb.keyframe_insert("rotation_quaternion", frame=f)
+    for pb in ob.pose.bones:
+        pb.select = True
+    return ob
+
+
+def _bone_keys(ob, bname):
+    """5.x 的分层动作要走 channelbag 才拿得到曲线"""
+    ad = ob.animation_data
+    act = ad.action
+    handle = getattr(ad, "action_slot_handle", None)
+    curves = []
+    for layer in getattr(act, "layers", ()):
+        for strip in layer.strips:
+            for cb in getattr(strip, "channelbags", ()):
+                if handle is not None and getattr(cb, "slot_handle", None) != handle:
+                    continue
+                curves.extend(cb.fcurves)
+    if not curves:
+        curves = list(getattr(act, "fcurves", ()) or ())
+    pre = 'pose.bones["%s"]' % bname
+    out = set()
+    for fc in curves:
+        if fc.data_path.startswith(pre):
+            for kp in fc.keyframe_points:
+                out.add(round(kp.co.x, 3))
+    return sorted(out)
+
+
+def t_keyoff_cascade():
+    ob = _fake_chain()
+    bpy.ops.pond.key_offset(step=2, reverse=False, order='HIERARCHY')
+    bad = []
+    for i in range(1, 6):
+        want = [1 + (i - 1) * 2, 20 + (i - 1) * 2]
+        got = _bone_keys(ob, "Bone_%d" % i)
+        if got != want:
+            bad.append("Bone_%d 要 %s 得了 %s" % (i, want, got))
+    assert not bad, "；".join(bad)
+    return "5 节骨链步长 2，逐根延后到位"
+step("关键帧错开", "按层级依次延后", t_keyoff_cascade)
+
+
+def t_keyoff_back():
+    ob = _fake_chain()
+    before = {i: _bone_keys(ob, "Bone_%d" % i) for i in range(1, 6)}
+    bpy.ops.pond.key_offset(step=3, reverse=False, order='HIERARCHY')
+    bpy.ops.pond.key_offset(step=-3, reverse=False, order='HIERARCHY')
+    after = {i: _bone_keys(ob, "Bone_%d" % i) for i in range(1, 6)}
+    assert before == after, "收不回原位: %s -> %s" % (before, after)
+    return "负步长原样收回"
+step("关键帧错开", "负步长收回原位", t_keyoff_back)
+
+
+def t_keyoff_no_bleed():
+    """Bone_1 的前缀不许误伤 Bone_10，没选中的骨骼一帧都不许动"""
+    ob = _fake_chain()
+    bpy.ops.object.mode_set(mode='EDIT')
+    b = ob.data.edit_bones.new("Bone_10")
+    b.head = (1, 0, 0)
+    b.tail = (1, 0, 0.2)
+    bpy.ops.object.mode_set(mode='POSE')
+    pb = ob.pose.bones["Bone_10"]
+    bpy.context.scene.frame_set(5)
+    pb.rotation_quaternion = (1, 0.1, 0, 0)
+    pb.keyframe_insert("rotation_quaternion", frame=5)
+    for p in ob.pose.bones:
+        p.select = (p.name != "Bone_10")
+
+    before = _bone_keys(ob, "Bone_10")
+    bpy.ops.pond.key_offset(step=3, reverse=False, order='HIERARCHY')
+    after = _bone_keys(ob, "Bone_10")
+    assert before == after, "没选中的 Bone_10 被动了: %s -> %s" % (before, after)
+    return "没选中的骨骼没被前缀误伤"
+step("关键帧错开", "不误伤没选中的骨骼", t_keyoff_no_bleed)
+
+
+# ---------- 17b. 防回潮：修过的 bug 逐条盯着 ----------
 
 def t_reg_lumen_state():
     """明度检查状态必须存在场景上,存 WindowManager 会随工程保存丢失"""
