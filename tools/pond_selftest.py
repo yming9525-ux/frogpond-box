@@ -498,8 +498,8 @@ step("MMD 刚体关节", "开关集合后不会再冒出来", t_mmd_survives_exc
 
 # ---------- 18. 关键帧错开 keyoffset ----------
 
-def _fake_chain(n=5):
-    """一条 n 节的骨链，每根 K 上第 1 和第 20 帧"""
+def _fake_chain(n=5, frames=(1, 20)):
+    """一条 n 节的骨链，每根在给定的帧上 K 一份姿势"""
     if bpy.context.mode != 'OBJECT':
         try:
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -524,7 +524,7 @@ def _fake_chain(n=5):
         prev = b
     bpy.ops.object.mode_set(mode='POSE')
 
-    for f in (1, 20):
+    for f in frames:
         bpy.context.scene.frame_set(f)
         for pb in ob.pose.bones:
             pb.rotation_quaternion = (1, 0.05 * f, 0, 0)
@@ -534,7 +534,7 @@ def _fake_chain(n=5):
     return ob
 
 
-def _bone_keys(ob, bname):
+def _curves_of(ob):
     """5.x 的分层动作要走 channelbag 才拿得到曲线"""
     ad = ob.animation_data
     act = ad.action
@@ -548,9 +548,24 @@ def _bone_keys(ob, bname):
                 curves.extend(cb.fcurves)
     if not curves:
         curves = list(getattr(act, "fcurves", ()) or ())
+    return curves
+
+
+def _select_keys_at(ob, frame):
+    """只把某一帧上的关键帧选中，其余取消，模拟摄影表里框一列"""
+    n = 0
+    for fc in _curves_of(ob):
+        for kp in fc.keyframe_points:
+            on = abs(kp.co.x - frame) < 1e-4
+            kp.select_control_point = on
+            n += 1 if on else 0
+    return n
+
+
+def _bone_keys(ob, bname):
     pre = 'pose.bones["%s"]' % bname
     out = set()
-    for fc in curves:
+    for fc in _curves_of(ob):
         if fc.data_path.startswith(pre):
             for kp in fc.keyframe_points:
                 out.add(round(kp.co.x, 3))
@@ -559,7 +574,7 @@ def _bone_keys(ob, bname):
 
 def t_keyoff_cascade():
     ob = _fake_chain()
-    bpy.ops.pond.key_offset(step=2, reverse=False, order='HIERARCHY')
+    bpy.ops.pond.key_offset(step=2, reverse=False, order='HIERARCHY', only_selected=False)
     bad = []
     for i in range(1, 6):
         want = [1 + (i - 1) * 2, 20 + (i - 1) * 2]
@@ -574,8 +589,8 @@ step("关键帧错开", "按层级依次延后", t_keyoff_cascade)
 def t_keyoff_back():
     ob = _fake_chain()
     before = {i: _bone_keys(ob, "Bone_%d" % i) for i in range(1, 6)}
-    bpy.ops.pond.key_offset(step=3, reverse=False, order='HIERARCHY')
-    bpy.ops.pond.key_offset(step=-3, reverse=False, order='HIERARCHY')
+    bpy.ops.pond.key_offset(step=3, reverse=False, order='HIERARCHY', only_selected=False)
+    bpy.ops.pond.key_offset(step=-3, reverse=False, order='HIERARCHY', only_selected=False)
     after = {i: _bone_keys(ob, "Bone_%d" % i) for i in range(1, 6)}
     assert before == after, "收不回原位: %s -> %s" % (before, after)
     return "负步长原样收回"
@@ -598,11 +613,44 @@ def t_keyoff_no_bleed():
         p.select = (p.name != "Bone_10")
 
     before = _bone_keys(ob, "Bone_10")
-    bpy.ops.pond.key_offset(step=3, reverse=False, order='HIERARCHY')
+    bpy.ops.pond.key_offset(step=3, reverse=False, order='HIERARCHY', only_selected=False)
     after = _bone_keys(ob, "Bone_10")
     assert before == after, "没选中的 Bone_10 被动了: %s -> %s" % (before, after)
     return "没选中的骨骼没被前缀误伤"
 step("关键帧错开", "不误伤没选中的骨骼", t_keyoff_no_bleed)
+
+
+def t_keyoff_only_selected():
+    """摄影表里框住中间那一列，只有它错开，前后两列留在原地"""
+    ob = _fake_chain(frames=(1, 20, 40))
+    picked = _select_keys_at(ob, 20)
+    assert picked, "没能选中第 20 帧上的关键帧"
+    bpy.ops.pond.key_offset(step=2, reverse=False, order='HIERARCHY',
+                            only_selected=True)
+    bad = []
+    for i in range(1, 6):
+        want = sorted({1, 20 + (i - 1) * 2, 40})
+        got = _bone_keys(ob, "Bone_%d" % i)
+        if got != want:
+            bad.append("Bone_%d 要 %s 得了 %s" % (i, want, got))
+    assert not bad, "；".join(bad)
+    return "只有选中的那一列错开了，首尾两列没动"
+step("关键帧错开", "只错开选中的那一列", t_keyoff_only_selected)
+
+
+def t_keyoff_sel_fallback():
+    """一个关键帧都没选的时候，别让「只动选中的」把整个操作变成没反应"""
+    ob = _fake_chain(frames=(1, 20))
+    for fc in _curves_of(ob):
+        for kp in fc.keyframe_points:
+            kp.select_control_point = False
+    r = bpy.ops.pond.key_offset(step=2, reverse=False, order='HIERARCHY',
+                                only_selected=True)
+    assert r == {'FINISHED'}, "一个帧都没选时被判成没反应了: %s" % r
+    got = _bone_keys(ob, "Bone_5")
+    assert got == [9, 28], "没回落到整条错开: %s" % got
+    return "没选中任何帧时自动整条错开"
+step("关键帧错开", "没选中帧时自动整条错开", t_keyoff_sel_fallback)
 
 
 # ---------- 17b. 防回潮：修过的 bug 逐条盯着 ----------

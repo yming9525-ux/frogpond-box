@@ -68,6 +68,13 @@ class POND_OT_key_offset(bpy.types.Operator):
         description="改成从末梢往根部传，用在甩回来的动作上",
     )
 
+    only_selected: bpy.props.BoolProperty(
+        name="只动选中的帧",
+        default=True,
+        description="摄影表里选中了关键帧就只错开那些，前后的动作留在原地。"
+                    "一个都没选时自动改成整条动画一起错开",
+    )
+
     order: bpy.props.EnumProperty(
         name="顺序",
         items=[
@@ -105,6 +112,12 @@ class POND_OT_key_offset(bpy.types.Operator):
         if self.reverse:
             bones.reverse()
 
+        # 摄影表里一个关键帧都没选时，「只动选中的」自动让位，免得点了没反应
+        has_sel = any(kp.select_control_point
+                      for fc in curves for kp in fc.keyframe_points)
+        use_sel = self.only_selected and has_sel
+        before_total = sum(len(fc.keyframe_points) for fc in curves)
+
         moved_keys = 0
         moved_bones = 0
         no_key = 0
@@ -118,29 +131,48 @@ class POND_OT_key_offset(bpy.types.Operator):
             for fc in curves:
                 if not fc.data_path.startswith(prefix):
                     continue
+                hit = True
                 for kp in fc.keyframe_points:
+                    if use_sel and not kp.select_control_point:
+                        continue
                     kp.co.x += shift
                     kp.handle_left.x += shift
                     kp.handle_right.x += shift
                     moved_keys += 1
                 fc.update()
-                hit = True
             if hit:
                 moved_bones += 1
             else:
                 no_key += 1
 
         if moved_keys == 0:
-            self.report({"WARNING"},
-                        "选中的骨骼身上没有关键帧，先给它们 K 上动作")
+            if use_sel:
+                self.report({"WARNING"},
+                            "这些骨骼身上没有选中的关键帧，去摄影表里把要错开的"
+                            "那几帧框上，或者把「只动选中的帧」取消")
+            else:
+                self.report({"WARNING"},
+                            "选中的骨骼身上没有关键帧，先给它们 K 上动作")
             return {"CANCELLED"}
+
+        # update() 会把撞到同一帧的关键帧并掉，这里如实报出来
+        lost = before_total - sum(len(fc.keyframe_points) for fc in curves)
 
         span = abs(self.step) * (len(bones) - 1)
         msg = "%d 根骨骼错开了 %d 个关键帧，首尾差 %d 帧" % (
             moved_bones, moved_keys, span)
+        if use_sel:
+            msg += "（只动了选中的那些）"
+        elif self.only_selected:
+            msg += "（没选中任何帧，整条一起错开了）"
         if no_key:
             msg += "；有 %d 根没有关键帧，跳过了" % no_key
-        self.report({"INFO"}, msg)
+        if lost > 0:
+            self.report({"WARNING"}, msg +
+                        "；有 %d 个关键帧错到了别的帧头上被并掉了，"
+                        "Ctrl+Z 可以还原" % lost)
+        else:
+            self.report({"INFO"}, msg)
         return {"FINISHED"}
 
 
@@ -159,6 +191,9 @@ def register():
     wm.pond_keyoff_reverse = bpy.props.BoolProperty(
         name="反向", default=False,
         description="从末梢往根部传")
+    wm.pond_keyoff_only_sel = bpy.props.BoolProperty(
+        name="只动选中的帧", default=True,
+        description="摄影表里选中了关键帧就只错开那些，一个都没选时整条一起错开")
     wm.pond_keyoff_order = bpy.props.EnumProperty(
         name="顺序",
         items=[
@@ -170,7 +205,8 @@ def register():
 
 def unregister():
     wm = bpy.types.WindowManager
-    for k in ("pond_keyoff_step", "pond_keyoff_reverse", "pond_keyoff_order"):
+    for k in ("pond_keyoff_step", "pond_keyoff_reverse", "pond_keyoff_order",
+              "pond_keyoff_only_sel"):
         if hasattr(wm, k):
             delattr(wm, k)
     for c in reversed(_classes):

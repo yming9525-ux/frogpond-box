@@ -23,15 +23,18 @@ class POND_PT_keyoffset(bpy.types.Panel):
         row.prop(wm, "pond_keyoff_step")
         row.prop(wm, "pond_keyoff_reverse", toggle=True)
         col.prop(wm, "pond_keyoff_order", text="")
+        col.prop(wm, "pond_keyoff_only_sel")
 
         col.separator()
         op = col.operator("pond.key_offset", text="错开", icon="IPO_EASE_IN_OUT")
         op.step = wm.pond_keyoff_step
         op.reverse = wm.pond_keyoff_reverse
         op.order = wm.pond_keyoff_order
+        op.only_selected = wm.pond_keyoff_only_sel
 
         col.separator()
         col.label(text="姿态模式选中一串骨骼，从根到梢依次延后", icon="INFO")
+        col.label(text="摄影表里框住几帧，就只错开那几帧", icon="BLANK1")
         col.label(text="步长填负数可以把错开过头的收回来", icon="BLANK1")
 
 
