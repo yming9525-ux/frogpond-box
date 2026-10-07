@@ -17,6 +17,24 @@ class POND_PT_sec_tidy(_SecBase, bpy.types.Panel):
         pass
 
 
+class POND_PT_scene_hair(_SecBase, bpy.types.Panel):
+    bl_label = "场景毛发"
+    bl_idname = "POND_PT_scene_hair"
+    bl_parent_id = "POND_PT_sec_tidy"
+    bl_order = 0
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        row = col.row(align=True)
+        show = row.operator(
+            "pond.set_hair_visibility", text="显示全部", icon="HIDE_OFF")
+        show.visible = True
+        hide = row.operator(
+            "pond.set_hair_visibility", text="隐藏全部", icon="HIDE_ON")
+        hide.visible = False
+
+
 class POND_PT_sec_look(_SecBase, bpy.types.Panel):
     bl_label = "💡 灯渲"
     bl_idname = "POND_PT_sec_look"
@@ -46,6 +64,7 @@ class POND_PT_sec_ship(_SecBase, bpy.types.Panel):
 
 _classes = (
     POND_PT_sec_tidy,
+    POND_PT_scene_hair,
     POND_PT_sec_look,
     POND_PT_sec_make,
     POND_PT_sec_ship,

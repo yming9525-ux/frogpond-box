@@ -105,8 +105,47 @@ class POND_OT_origin_to_side(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _hair_modifiers(scene):
+    for obj in scene.objects:
+        for modifier in obj.modifiers:
+            if modifier.type != 'PARTICLE_SYSTEM':
+                continue
+            system = modifier.particle_system
+            if system and system.settings and system.settings.type == 'HAIR':
+                yield modifier
+
+
+class POND_OT_set_hair_visibility(bpy.types.Operator):
+    """仅切换粒子毛发修改器的视窗显示，不改变物体或渲染可见性"""
+    bl_idname = "pond.set_hair_visibility"
+    bl_label = "设置毛发显示"
+    bl_options = {"REGISTER", "UNDO"}
+
+    visible: bpy.props.BoolProperty(name="显示", default=True)
+
+    def execute(self, context):
+        hairs = list(_hair_modifiers(context.scene))
+        if not hairs:
+            self.report({"WARNING"}, "当前场景没有找到粒子毛发修改器")
+            return {"CANCELLED"}
+
+        changed = 0
+        skipped = 0
+        for modifier in hairs:
+            try:
+                modifier.show_viewport = self.visible
+                changed += 1
+            except (AttributeError, RuntimeError):
+                skipped += 1
+
+        action = "显示" if self.visible else "隐藏"
+        self.report({"INFO"}, f"已{action} {changed} 个粒子毛发修改器，跳过 {skipped} 个")
+        return {"FINISHED"}
+
+
 _classes = (
     POND_OT_origin_to_side,
+    POND_OT_set_hair_visibility,
 )
 
 
