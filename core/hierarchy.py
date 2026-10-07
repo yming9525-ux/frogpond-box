@@ -120,6 +120,67 @@ class POND_OT_group_to_parent(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _is_ancestor(maybe_ancestor, obj):
+    """maybe_ancestor 是不是 obj 的祖先。挂之前得查，不然会绕成环，Blender 会炸"""
+    p = obj.parent
+    while p:
+        if p == maybe_ancestor:
+            return True
+        p = p.parent
+    return False
+
+
+class POND_OT_join_group(bpy.types.Operator):
+    """把其他所选物体加进激活物体所在的那个组，跟它做兄弟（世界变换不变）。
+    跟「所选打组」的区别：那个是挂到激活物体下面，这个是挂到激活物体的父级下面，
+    所以在视图里点组里随便哪个成员就行，不用去大纲里翻那个空物体
+    """
+    bl_idname = "pond.join_group"
+    bl_label = "加入所在组"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        act = context.active_object
+        if not act or not act.parent:
+            return False
+        return any(o != act for o in context.selected_objects)
+
+    def execute(self, context):
+        act = context.active_object
+        if not act or not act.parent:
+            self.report({"WARNING"}, "激活物体没有父级，它不在任何组里。"
+                                     "要新建组请用「所选打组」")
+            return {"CANCELLED"}
+        parent = act.parent
+
+        moved, already, looped = 0, 0, []
+        for obj in context.selected_objects:
+            if obj == act or obj == parent:
+                continue
+            if obj.parent == parent:      # 本来就在这个组里
+                already += 1
+                continue
+            if _is_ancestor(obj, parent):  # 它是父级的祖先，挂上去会绕成环
+                looped.append(obj.name)
+                continue
+            with _Ctx(obj):
+                obj.parent = parent
+            moved += 1
+
+        if looped:
+            self.report({"WARNING"},
+                        "%d 个加进「%s」；%s 是这个组的上级，挂上去会绕成环，跳过了"
+                        % (moved, parent.name, "、".join(looped[:3])))
+        elif moved:
+            tail = "，另有 %d 个本来就在组里" % already if already else ""
+            self.report({"INFO"}, "%d 个 → 「%s」%s" % (moved, parent.name, tail))
+        else:
+            self.report({"WARNING"}, "没有可加的物体（都已经在「%s」里了）" % parent.name)
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
 class POND_OT_select_parents(bpy.types.Operator):
     """选中所有所选物体的直接父级（语义与 Bekkan SelectParent 等价，采用本实现）"""
     bl_idname = "pond.select_parents"
@@ -206,6 +267,7 @@ class SoloPick(bpy.types.Operator):
 _classes = (
     # Pond
     POND_OT_group_to_parent,
+    POND_OT_join_group,
     POND_OT_select_parents,
     POND_OT_extract,
     # 拎出核心（源自别馆 SoloPick，池塘「单个拎出」使用）

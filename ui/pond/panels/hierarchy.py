@@ -18,6 +18,7 @@ class POND_PT_hierarchy(bpy.types.Panel):
     def draw(self, context):
         col = self.layout.column(align=True)
         col.operator("pond.group_to_parent", text="所选打组", icon="LINKED")
+        col.operator("pond.join_group", text="加入所在组", icon="CON_CHILDOF")
         col.separator()
         col.operator("object.solo_pick_visn", text="单个拎出", icon="EXPORT")
         col.operator("pond.extract", text="全部拎出", icon="UNLINKED")
