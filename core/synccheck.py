@@ -5,7 +5,7 @@ import bpy
 
 _GRP_COL = "集合本身"
 _CATS = (("MODEL", "模型"), ("MOD", "修改器"))   # 面板两大类：物体+集合 / 修改器
-_collapsed = set()      # 收起的组（会话内记住），键=「大类|组名」，大类本身=「大类|」
+_collapsed = set()      # 收起的组（会话内记住），键=「大类|组名」
 _undo_stack = []        # 对齐撤回栈: 每层=[(kind,name,extra,视口原值,渲染原值)],最多留10层
 
 
@@ -278,6 +278,8 @@ def register():
         bpy.utils.register_class(c)
     bpy.types.WindowManager.pond_sync_items = bpy.props.CollectionProperty(type=PondSyncItem)
     bpy.types.WindowManager.pond_sync_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.pond_sync_tab = bpy.props.EnumProperty(
+        name="分类", items=[(c, n, "") for c, n in _CATS], default="MODEL")
     for hl in (bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
         if _resync_after_undo not in hl:
             hl.append(_resync_after_undo)
@@ -287,6 +289,7 @@ def unregister():
     for hl in (bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
         if _resync_after_undo in hl:
             hl.remove(_resync_after_undo)
+    del bpy.types.WindowManager.pond_sync_tab
     del bpy.types.WindowManager.pond_sync_scanned
     del bpy.types.WindowManager.pond_sync_items
     for c in reversed(_classes):

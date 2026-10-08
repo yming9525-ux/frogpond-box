@@ -37,31 +37,35 @@ class POND_PT_synccheck(bpy.types.Panel):
                 order.append(it.group)
             groups[it.group].append(i)
 
+        # 横排分类签：点哪类看哪类
+        tabs = layout.row(align=True)
         for cat, cat_name in _CATS:
-            order, groups = cats[cat]
-            if not order:
-                continue
+            n = sum(len(v) for v in cats[cat][1].values())
+            tabs.prop_enum(wm, "pond_sync_tab", cat, text=f"{cat_name} ({n})",
+                           icon="MODIFIER" if cat == "MOD" else "OBJECT_DATA")
+
+        cat = wm.pond_sync_tab
+        cat_name = dict(_CATS)[cat]
+        order, groups = cats[cat]
+        if not order:
+            layout.label(text=f"{cat_name}这边没有不同步的", icon="CHECKMARK")
+        else:
             if _GRP_COL in order:
                 order.remove(_GRP_COL)
                 order.append(_GRP_COL)
-            total = sum(len(v) for v in groups.values())
-            cat_box = layout.box()
-            cat_fold = f"{cat}|" in _collapsed
-            head = cat_box.row(align=True)
-            op = head.operator("pond.sync_fold", text="",
-                               icon="TRIA_RIGHT" if cat_fold else "TRIA_DOWN",
-                               emboss=False)
-            op.group = f"{cat}|"
-            head.label(text=f"{cat_name} ({total})",
-                       icon="MODIFIER" if cat == "MOD" else "OBJECT_DATA")
-            self._align_buttons(head, cat, "")
-            if cat_fold:
-                continue
+            row = layout.row(align=True)
+            for text, icon, direction in (
+                    (f"{cat_name}：以渲染为准", "RESTRICT_VIEW_OFF", "TO_RENDER"),
+                    (f"{cat_name}：以视图为准", "RESTRICT_RENDER_OFF", "TO_VIEWPORT")):
+                op = row.operator("pond.sync_apply", text=text, icon=icon)
+                op.direction = direction
+                op.category = cat
+                op.group = ""
 
             for gname in order:
                 idxs = groups[gname]
                 key = f"{cat}|{gname}"
-                box = cat_box.box()
+                box = layout.box()
                 head = box.row(align=True)
                 fold = key in _collapsed
                 op = head.operator("pond.sync_fold", text="",
@@ -81,13 +85,14 @@ class POND_PT_synccheck(bpy.types.Panel):
                     op.index = i
                     row.label(text=it.detail)
 
+        layout.separator()
         col = layout.column(align=True)
-        op = col.operator("pond.sync_apply", text="全部：以渲染为准",
+        op = col.operator("pond.sync_apply", text="两类全部：以渲染为准",
                           icon="RESTRICT_VIEW_OFF")
         op.direction = "TO_RENDER"
         op.group = ""
         op.category = ""
-        op = col.operator("pond.sync_apply", text="全部：以视图为准",
+        op = col.operator("pond.sync_apply", text="两类全部：以视图为准",
                           icon="RESTRICT_RENDER_OFF")
         op.direction = "TO_VIEWPORT"
         op.group = ""
