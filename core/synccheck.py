@@ -4,7 +4,8 @@
 import bpy
 
 _GRP_COL = "集合本身"
-_collapsed = set()      # 收起的组名（会话内记住）
+_CATS = (("MODEL", "模型"), ("MOD", "修改器"))   # 面板两大类：物体+集合 / 修改器
+_collapsed = set()      # 收起的组（会话内记住），键=「大类|组名」，大类本身=「大类|」
 _undo_stack = []        # 对齐撤回栈: 每层=[(kind,name,extra,视口原值,渲染原值)],最多留10层
 
 
@@ -37,6 +38,10 @@ def _lc_map(view_layer):
     return out
 
 
+def _cat_of(kind):
+    return "MOD" if kind == "MOD" else "MODEL"
+
+
 def _obj_group(o):
     return o.users_collection[0].name if o.users_collection else "场景根"
 
@@ -55,8 +60,7 @@ def _scan(context):
         for m in o.modifiers:
             if m.show_viewport != m.show_render:
                 found.append(("MOD", o.name, m.name, f"{o.name} ▸ {m.name}",
-                              "修改器:视口%s / 渲染%s" % ("开" if m.show_viewport else "关",
-                                                        "开" if m.show_render else "关"),
+                              _fmt(m.show_viewport, m.show_render),
                               _obj_group(o)))
     for col, lc in _lc_map(context.view_layer).items():
         if lc.hide_viewport != col.hide_render:
@@ -102,11 +106,11 @@ class POND_OT_sync_scan(bpy.types.Operator):
 
 
 class POND_OT_sync_fold(bpy.types.Operator):
-    """收起/展开这个集合的问题清单"""
+    """收起/展开这一组的问题清单"""
     bl_idname = "pond.sync_fold"
     bl_label = "收展"
 
-    group: bpy.props.StringProperty()
+    group: bpy.props.StringProperty()   # 「大类|组名」
 
     def execute(self, context):
         if self.group in _collapsed:
@@ -145,7 +149,8 @@ class POND_OT_sync_select(bpy.types.Operator):
 
 
 class POND_OT_sync_apply(bpy.types.Operator):
-    """把不同步的项对齐（group 留空=全场景，填组名=只对齐这一组）"""
+    """把不同步的项对齐（category 选大类：模型/修改器，留空=两类都算；
+    group 留空=全场景，填组名=只对齐这一组）"""
     bl_idname = "pond.sync_apply"
     bl_label = "一键对齐"
     bl_options = {"REGISTER", "UNDO"}
@@ -155,6 +160,7 @@ class POND_OT_sync_apply(bpy.types.Operator):
         ("TO_VIEWPORT", "以视图为准", "以视图可见性为准，改渲染开关"),
     ])
     group: bpy.props.StringProperty(default="")
+    category: bpy.props.StringProperty(default="")
 
     def execute(self, context):
         to_render = self.direction == "TO_RENDER"
@@ -162,6 +168,8 @@ class POND_OT_sync_apply(bpy.types.Operator):
         n = 0
         changed = []
         for kind, obj_name, extra, _label, _detail, group in _scan(context):
+            if self.category and _cat_of(kind) != self.category:
+                continue
             if self.group and group != self.group:
                 continue
             if kind == "OBJ":
@@ -203,7 +211,8 @@ class POND_OT_sync_apply(bpy.types.Operator):
             _undo_stack.append(changed)
             del _undo_stack[:-10]
         bpy.ops.pond.sync_scan()
-        where = f"「{self.group}」" if self.group else ""
+        cat = dict(_CATS).get(self.category, "")
+        where = "".join(f"「{w}」" for w in (cat, self.group) if w)
         self.report({"INFO"}, f"对齐了{where} {n} 处")
         return {"FINISHED"}
 
